@@ -1,0 +1,58 @@
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+type RWCache struct {
+	mu  sync.RWMutex
+	mem map[string]string
+}
+
+func NewRWCache() *RWCache { return &RWCache{mem: make(map[string]string)} }
+
+func (c *RWCache) Get(key string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	v, ok := c.mem[key]
+	return v, ok
+}
+
+func (c *RWCache) Set(key, val string) {
+	c.mu.Lock()
+	c.mem[key] = val
+	c.mu.Unlock()
+}
+
+func main() {
+	cache := NewRWCache()
+	cache.Set("user:1", "Alice")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 5; j++ {
+				if v, ok := cache.Get("user:1"); ok {
+					fmt.Printf("[R%d] read: %s\n", id, v)
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}(i + 1)
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for _, v := range []string{"Bob", "Carol", "Dave"} {
+			cache.Set("user:1", v)
+			fmt.Println("[W] updated to:", v)
+			time.Sleep(120 * time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+}
