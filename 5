@@ -1,0 +1,139 @@
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+type entry struct {
+	val       string
+	createdAt time.Time
+	accessAt  time.Time
+}
+
+// Вариант A — чтение НЕ продлевает TTL (истекает от момента создания)
+type TTLCacheA struct {
+	mu    sync.RWMutex
+	data  map[string]entry
+	ttl   time.Duration
+	stopC chan struct{}
+}
+
+func NewTTLCacheA(ttl, cleanup time.Duration) *TTLCacheA {
+	c := &TTLCacheA{data: make(map[string]entry), ttl: ttl, stopC: make(chan struct{})}
+	go c.janitor(cleanup)
+	return c
+}
+func (c *TTLCacheA) janitor(period time.Duration) {
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			now := time.Now()
+			c.mu.Lock()
+			for k, e := range c.data {
+				if now.Sub(e.createdAt) > c.ttl {
+					delete(c.data, k)
+				}
+			}
+			c.mu.Unlock()
+		case <-c.stopC:
+			return
+		}
+	}
+}
+func (c *TTLCacheA) Set(k, v string) {
+	c.mu.Lock()
+	c.data[k] = entry{val: v, createdAt: time.Now(), accessAt: time.Now()}
+	c.mu.Unlock()
+}
+func (c *TTLCacheA) Get(k string) (string, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.data[k]
+	if !ok {
+		return "", false
+	}
+	return e.val, true
+}
+func (c *TTLCacheA) Close() { close(c.stopC) }
+
+// Вариант B — чтение продлевает TTL (истекает от последнего доступа)
+type TTLCacheB struct {
+	mu    sync.RWMutex
+	data  map[string]entry
+	ttl   time.Duration
+	stopC chan struct{}
+}
+
+func NewTTLCacheB(ttl, cleanup time.Duration) *TTLCacheB {
+	c := &TTLCacheB{data: make(map[string]entry), ttl: ttl, stopC: make(chan struct{})}
+	go c.janitor(cleanup)
+	return c
+}
+func (c *TTLCacheB) janitor(period time.Duration) {
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			now := time.Now()
+			c.mu.Lock()
+			for k, e := range c.data {
+				if now.Sub(e.accessAt) > c.ttl {
+					delete(c.data, k)
+				}
+			}
+			c.mu.Unlock()
+		case <-c.stopC:
+			return
+		}
+	}
+}
+func (c *TTLCacheB) Set(k, v string) {
+	c.mu.Lock()
+	c.data[k] = entry{val: v, createdAt: time.Now(), accessAt: time.Now()}
+	c.mu.Unlock()
+}
+func (c *TTLCacheB) Get(k string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.data[k]
+	if !ok {
+		return "", false
+	}
+	e.accessAt = time.Now()
+	c.data[k] = e
+	return e.val, true
+}
+func (c *TTLCacheB) Close() { close(c.stopC) }
+
+func main() {
+	fmt.Println("TTL Cache A (read DOES NOT extend TTL)")
+	a := NewTTLCacheA(500*time.Millisecond, 100*time.Millisecond)
+	a.Set("x", "1")
+	time.Sleep(400 * time.Millisecond)
+	if v, ok := a.Get("x"); ok {
+		fmt.Println("A get x =", v)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if _, ok := a.Get("x"); !ok {
+		fmt.Println("A x expired")
+	}
+	a.Close()
+
+	fmt.Println("\nTTL Cache B (read DOES extend TTL)")
+	b := NewTTLCacheB(500*time.Millisecond, 100*time.Millisecond)
+	b.Set("y", "2")
+	time.Sleep(400 * time.Millisecond)
+	if v, ok := b.Get("y"); ok {
+		fmt.Println("B get y =", v, "(extended)")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if v, ok := b.Get("y"); ok {
+		fmt.Println("B still present:", v)
+	}
+	b.Close()
+}
