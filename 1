@@ -1,0 +1,27 @@
+package main
+
+import (
+	"fmt"
+	"sync"
+	"sync/atomic"
+)
+
+func main() {
+	var counter int64
+	var wg sync.WaitGroup
+
+	workers := 10
+	incrementsPerWorker := 100000
+
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < incrementsPerWorker; j++ {
+				atomic.AddInt64(&counter, 1)
+			}
+		}()
+	}
+	wg.Wait()
+	fmt.Printf("Итоговое значение счётчика: %d (ожидалось %d)\n", counter, int64(workers*incrementsPerWorker))
+}
