@@ -1,0 +1,58 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"time"
+)
+
+type SafeLogger struct {
+	ch   chan string
+	quit chan struct{}
+}
+
+func NewSafeLogger() *SafeLogger {
+	l := &SafeLogger{
+		ch:   make(chan string, 1024),
+		quit: make(chan struct{}),
+	}
+	go l.loop()
+	return l
+}
+
+func (l *SafeLogger) loop() {
+	logger := log.New(os.Stdout, "", log.LstdFlags|log.Lmicroseconds)
+	for {
+		select {
+		case msg := <-l.ch:
+			logger.Printf("%s", msg)
+		case <-l.quit:
+			close(l.ch)
+			for msg := range l.ch {
+				logger.Printf("%s", msg)
+			}
+			return
+		}
+	}
+}
+
+func (l *SafeLogger) Printf(format string, args ...any) {
+	l.ch <- fmt.Sprintf(format, args...)
+}
+
+func (l *SafeLogger) Close() { close(l.quit) }
+
+func main() {
+	l := NewSafeLogger()
+	for i := 0; i < 5; i++ {
+		go func(id int) {
+			for j := 0; j < 5; j++ {
+				l.Printf("[G%d] log #%d", id, j)
+				time.Sleep(10 * time.Millisecond)
+			}
+		}(i + 1)
+	}
+	time.Sleep(200 * time.Millisecond)
+	l.Close()
+}
