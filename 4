@@ -1,0 +1,56 @@
+package main
+
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"time"
+)
+
+type VoteCounter struct {
+	mu     sync.Mutex
+	result map[string]int
+}
+
+func NewVoteCounter() *VoteCounter { return &VoteCounter{result: make(map[string]int)} }
+
+func (vc *VoteCounter) Add(candidate string, n int) {
+	vc.mu.Lock()
+	vc.result[candidate] += n
+	vc.mu.Unlock()
+}
+
+func (vc *VoteCounter) Snapshot() map[string]int {
+	vc.mu.Lock()
+	defer vc.mu.Unlock()
+	cp := make(map[string]int, len(vc.result))
+	for k, v := range vc.result {
+		cp[k] = v
+	}
+	return cp
+}
+
+func main() {
+	rand.Seed(time.Now().UnixNano())
+	vc := NewVoteCounter()
+	var wg sync.WaitGroup
+
+	cands := []string{"A", "B", "C"}
+	producers := 5
+
+	wg.Add(producers)
+	for i := 0; i < producers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 1000; j++ {
+				vc.Add(cands[rand.Intn(len(cands))], 1)
+				if j%200 == 0 {
+					time.Sleep(1 * time.Millisecond)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	fmt.Println("Итог:", vc.Snapshot())
+}
