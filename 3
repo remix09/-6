@@ -1,0 +1,58 @@
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+type SafeQueue[T any] struct {
+	mu   sync.Mutex
+	cond *sync.Cond
+	data []T
+}
+
+func NewSafeQueue[T any]() *SafeQueue[T] {
+	q := &SafeQueue[T]{}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *SafeQueue[T]) Enqueue(v T) {
+	q.mu.Lock()
+	q.data = append(q.data, v)
+	q.mu.Unlock()
+	q.cond.Signal()
+}
+
+func (q *SafeQueue[T]) Dequeue() T {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.data) == 0 {
+		q.cond.Wait()
+	}
+	v := q.data[0]
+	q.data = q.data[1:]
+	return v
+}
+
+func main() {
+	q := NewSafeQueue[int]()
+	var wg sync.WaitGroup
+
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 5; j++ {
+				v := q.Dequeue()
+				fmt.Printf("Consumer %d got %d\n", id, v)
+			}
+		}(i + 1)
+	}
+
+	for i := 1; i <= 15; i++ {
+		q.Enqueue(i)
+	}
+
+	wg.Wait()
+}
